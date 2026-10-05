@@ -1,0 +1,79 @@
+name: CI/CD
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    environment: albaddar
+    env:
+      # create_engine()/Alembic's Config both need a real, parseable URL just
+      # to construct the Engine/Config object — they don't connect at import
+      # time, but they do need a non-None, well-formed string. Set these as
+      # secrets on the "albaddar" environment: Settings → Environments.
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Verify the app imports cleanly
+        # Catches syntax errors, broken imports, missing deps. Doesn't need a
+        # live DB/Redis — engine/client creation in this app is lazy.
+        run: uv run python -c "import src.main"
+
+      - name: Verify Alembic revision graph is well-formed
+        # NOTE: not `alembic upgrade head` against a fresh DB — this repo's
+        # migration chain has no true baseline (the first migration assumes
+        # base tables already exist from an early manual create_all(), see
+        # migrations/versions/9a2c5fdc5d6c_initialize.py), so replaying it
+        # from empty fails by design, not because of a real regression.
+        # `alembic history` instead validates the revision graph itself is
+        # sane (no duplicate/broken down_revision links) without touching a
+        # database.
+        run: uv run alembic history
+
+  deploy:
+    needs: build-check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # This job runs directly on your VPS via the self-hosted runner you
+    # registered there — no SSH-in step needed, no secrets required. The
+    # runner IS the deploy target.
+    runs-on: self-hosted
+    steps:
+      # The runner checks out the latest main into its own workspace
+      # automatically — no manual git pull/cd to a separate path needed.
+      #
+      # clean: false is required here — actions/checkout defaults to
+      # `git clean -ffdx` before checking out, which wipes every untracked
+      # AND gitignored file, including .env (and logs/, .venv/ if not
+      # already present). That's what was deleting .env on every deploy.
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Restart app via PM2
+        run: |
+          set -e
+          mkdir -p logs
+          pm2 startOrReload ecosystem.config.js --update-env
+          pm2 save
