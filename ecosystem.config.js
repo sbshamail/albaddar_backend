@@ -21,11 +21,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "500M",
       env: {
-        PORT: "",
+        PORT: "8011",
         UVICORN_WORKERS: "4",
-        DATABASE_URL: "",
-        MEDIA_FOLDER: "",
-        DOMAIN: "",
       },
       out_file: "./logs/prod-out.log",
       error_file: "./logs/prod-error.log",
