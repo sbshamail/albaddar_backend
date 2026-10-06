@@ -5,7 +5,7 @@
 module.exports = {
   apps: [
     {
-      name: "albaddar-prod",
+      name: "albaddar-backend",
       script: "./start.sh",
       interpreter: "bash",
       // __dirname always resolves to wherever this file itself lives, so
