@@ -9,12 +9,12 @@ on:
 jobs:
   build-check:
     runs-on: ubuntu-latest
-    environment: albaddar
+    environment: albadar
     env:
       # create_engine()/Alembic's Config both need a real, parseable URL just
       # to construct the Engine/Config object — they don't connect at import
       # time, but they do need a non-None, well-formed string. Set these as
-      # secrets on the "albaddar" environment: Settings → Environments.
+      # secrets on the "albadar" environment: Settings → Environments.
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
     steps:
