@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from src.api.core.operation import listRecords
 from src.api.models.mediaModel import Media, MediaRead
+from src.api.core.operation.media_usage import build_usage_map
 from src.api.core.operation.media import MEDIA_DIR, delete_media_items, uploadImage
 from src.api.core.dependencies import GetSession, ListQueryParams
 from src.api.core.response import api_response, raiseExceptions
@@ -88,6 +89,38 @@ def list(user: requireAdmin, query_params: ListQueryParams):
         Model=Media,
         Schema=MediaRead,
     )
+
+
+@router.get("/usage")
+def usage(session: GetSession, user: requireAdmin):
+    """Every media row with `used_in`: the tables/columns/rows referencing it."""
+    medias = session.scalars(select(Media).order_by(Media.id)).all()
+    usage_map = build_usage_map(session, medias)
+    data = [
+        {
+            **MediaRead.model_validate(m).model_dump(),
+            "used_in": usage_map[m.id],
+        }
+        for m in medias
+    ]
+    return api_response(200, "Media usage", data, len(data))
+
+
+@router.get("/unused")
+def unused(session: GetSession, user: requireAdmin):
+    """Media not referenced by any record — safe candidates for deletion
+    (feed `ids` / `filenames` to the delete-by-* routes)."""
+    medias = session.scalars(select(Media).order_by(Media.id)).all()
+    usage_map = build_usage_map(session, medias)
+    free = [m for m in medias if not usage_map[m.id]]
+    data = {
+        "ids": [m.id for m in free],
+        "filenames": [m.filename for m in free],
+        "items": [
+            {"id": m.id, "filename": m.filename, "size_mb": m.size_mb} for m in free
+        ],
+    }
+    return api_response(200, "Unused media", data, len(free))
 
 
 # ----------------------------

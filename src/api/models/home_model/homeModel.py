@@ -12,7 +12,6 @@ from src.api.models.baseModel import TimeStampedModel, TimeStampReadModel
 from src.api.models.mediaModel import MediaRead
 from src.api.models.utils import to_bool, to_int
 
-
 # The only background shapes accepted (what the admin's GradientPicker
 # emits). Strict on purpose: the value is rendered into an inline style on
 # the storefront, so anything free-form (url(), expression, `;`) is rejected.
@@ -36,6 +35,7 @@ class HomeSectionType(str, Enum):
     BANNER_ROW = "banner_row"  # N banners side by side (default 4)
     FEATURED_PRODUCTS = "featured_products"
     PRODUCT_LIST = "product_list"
+    BLOG_LIST = "blog_list"  # storefront's blog list component (no admin)
 
 
 # Section kinds whose content is a set of Banner rows.

@@ -1,7 +1,7 @@
 import builtins
 import json
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.datastructures import UploadFile as FormUploadFile
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import joinedload, selectinload
@@ -70,6 +70,16 @@ def _update_variant_from_payload(product_variant: ProductVariant, payload: dict)
             setattr(product_variant, field, value)
 
 
+async def _download_or_fail(url, session, shop_id, title=None):
+    """download_and_save_image returns None on failure; letting that through
+    left the raw URL string in the product data, which then blew up response
+    validation with a confusing "valid dictionary" error. Fail clearly."""
+    saved = await download_and_save_image(url, session, shop_id=shop_id, title=title)
+    if not saved:
+        raise HTTPException(400, f"Could not download image from URL: {url}")
+    return saved
+
+
 async def _resolve_thumbnail_url(thumbnail, session, shop_id, title=None):
     """If `thumbnail` is a raw http(s) URL (e.g. from the n8n product-import
     automation), download it into a real Media record now and return that —
@@ -77,9 +87,7 @@ async def _resolve_thumbnail_url(thumbnail, session, shop_id, title=None):
     uploadSingleMedia pipeline (an UploadFile, or an existing-media filename
     string)."""
     if is_image_url(thumbnail):
-        return await download_and_save_image(
-            thumbnail, session, shop_id=shop_id, title=title
-        )
+        return await _download_or_fail(thumbnail, session, shop_id, title)
     return None
 
 
@@ -92,11 +100,7 @@ async def _split_image_urls(images: list, session, shop_id, title=None):
     downloaded = []
     for item in images:
         if is_image_url(item):
-            saved = await download_and_save_image(
-                item, session, shop_id=shop_id, title=title
-            )
-            if saved:
-                downloaded.append(saved)
+            downloaded.append(await _download_or_fail(item, session, shop_id, title))
     return remaining, downloaded
 
 
@@ -162,11 +166,8 @@ async def upsert_product_variants(
         # this function sees the same {id, filename, original, media_type}
         # shape a real upload would have produced.
         if not image_file and is_image_url(variant.get("image")):
-            variant["image"] = await download_and_save_image(
-                variant["image"],
-                session,
-                shop_id=product.shop_id,
-                title=product.name,
+            variant["image"] = await _download_or_fail(
+                variant["image"], session, product.shop_id, product.name
             )
 
         if variant_id:
@@ -333,11 +334,8 @@ async def update_product(
         # into a real Media record the same way a fresh upload would be.
         if product.thumbnail:
             await deleteMediaFiles(session, product.thumbnail)
-        request.thumbnail = await download_and_save_image(
-            request.thumbnail,
-            session,
-            shop_id=shop_id,
-            title=request.name or product.name,
+        request.thumbnail = await _download_or_fail(
+            request.thumbnail, session, shop_id, request.name or product.name
         )
 
     request.images, images_from_url = await _split_image_urls(

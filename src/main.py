@@ -17,6 +17,7 @@ from src.api.routers.dashboard import dashboardRoute
 
 from src.api.routers.category import categoryRoute
 from src.api.routers.home import bannerRoute, homeSectionRoute
+from src.api.routers.blog import blogRoute
 from src.api.routers.auth.role_route import (
     roleRoute,
     shopRoleRoute,
@@ -175,3 +176,4 @@ app.include_router(orderItemRoute.router)
 app.include_router(dashboardRoute.router)
 app.include_router(homeSectionRoute.router)
 app.include_router(bannerRoute.router)
+app.include_router(blogRoute.router)

@@ -5,6 +5,7 @@ import time
 from uuid import uuid4
 
 import httpx
+from urllib.parse import urlsplit
 from src.api.core.response import api_response
 from src.api.core.utility import slugify
 from PIL import Image, UnidentifiedImageError, ImageOps
@@ -23,7 +24,11 @@ SUB_DIR = MEDIA_FOLDER
 MEDIA_DIR = os.path.join(BASE_DIR, SUB_DIR)
 
 ALLOWED_RAW_EXT = [".webp", ".avif", ".ico", ".svg"]
-MAX_SIZE = 2 * 1024 * 1024  # 1 MB
+MAX_SIZE = 2 * 1024 * 1024  # hard limit, only reachable by non-resizable raw files (svg/ico)
+TARGET_SIZE = 1024 * 1024  # every raster image is forced under this (1 MB)
+MAX_DIMENSION = 2560  # longest side cap — phone photos are 4000-8000px
+MIN_DIMENSION = 320  # never shrink below this while chasing the target
+QUALITY_STEPS = (90, 82, 74, 66, 58, 50, 42)
 THUMBNAIL_SIZE = (300, 300)  # max width/height
 MAX_SIZE_MB = MAX_SIZE / (1024 * 1024)
 
@@ -75,6 +80,44 @@ def entryMedia(
     return records
 
 
+def _compress_to_target(data: bytes, icc_profile=None, target: int = TARGET_SIZE) -> bytes:
+    """Re-encode image bytes as WebP and FORCE the result under `target`.
+
+    Like WhatsApp: cap the longest side, then walk a quality ladder; if even
+    the lowest quality is still too big (huge/noisy photo), shrink the
+    dimensions by 15% and walk the ladder again, until it fits. Raises
+    UnidentifiedImageError for non-images."""
+    img = Image.open(io.BytesIO(data))
+    img = ImageOps.exif_transpose(img)
+    icc_profile = icc_profile or img.info.get("icc_profile")
+    # WebP only takes RGB/RGBA — palette, CMYK, 16-bit etc. must be converted.
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB")
+
+    if max(img.size) > MAX_DIMENSION:
+        img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.LANCZOS)
+
+    while True:
+        for quality in QUALITY_STEPS:
+            buffer = io.BytesIO()
+            img.save(
+                buffer,
+                "webp",
+                quality=quality,
+                method=4,  # 6 is much slower for ~no size gain; we loop here
+                icc_profile=icc_profile,
+            )
+            if buffer.tell() <= target:
+                return buffer.getvalue()
+
+        if max(img.size) <= MIN_DIMENSION:
+            return buffer.getvalue()  # best effort; caller's size check decides
+        img = img.resize(
+            (max(1, int(img.width * 0.85)), max(1, int(img.height * 0.85))),
+            Image.LANCZOS,
+        )
+
+
 async def uploadImage(files, thumbnail, unique=True):
     saved_files = []
 
@@ -90,38 +133,32 @@ async def uploadImage(files, thumbnail, unique=True):
         else:
             base_name = original_name
 
-        # RAW image handling
-        if ext in ALLOWED_RAW_EXT:
+        content = await file.read()
+
+        # SVG / ICO can't be rasterised sensibly — store as-is. Other formats
+        # (incl. webp/avif a phone or camera produced) are always passed
+        # through the compressor unless they already fit under the target.
+        if ext in (".svg", ".ico") or (
+            ext in ALLOWED_RAW_EXT and len(content) <= TARGET_SIZE
+        ):
             output_filename = base_name + ext
             file_path = os.path.join(MEDIA_DIR, output_filename)
             with open(file_path, "wb") as buffer:
-                buffer.write(await file.read())
+                buffer.write(content)
         else:
             try:
-                img = Image.open(file.file)
-                icc_profile = img.info.get("icc_profile")
-
-                img = ImageOps.exif_transpose(img)
-
-                # Convert to webp with unique naming
-                output_filename = base_name + ".webp"
-                file_path = os.path.join(MEDIA_DIR, output_filename)
-
-                img.save(
-                    file_path,
-                    "webp",
-                    quality=95,
-                    method=6,
-                    icc_profile=icc_profile,
-                    lossless=False,
-                )
-                ext = ".webp"
-
-            except UnidentifiedImageError:
-                raise api_response(
+                compressed = await asyncio.to_thread(_compress_to_target, content)
+            except (UnidentifiedImageError, OSError):
+                return api_response(
                     400,
                     f"File type {ext} is not a supported image format.",
                 )
+
+            output_filename = base_name + ".webp"
+            file_path = os.path.join(MEDIA_DIR, output_filename)
+            with open(file_path, "wb") as buffer:
+                buffer.write(compressed)
+            ext = ".webp"
 
         # Validate file size
         size_bytes = os.path.getsize(file_path)
@@ -269,7 +306,20 @@ async def download_and_save_image(
     Retries on 429 with backoff — hosts like Imgur rate-limit anonymous
     requests aggressively when downloading many images back-to-back (e.g.
     seeding demo data)."""
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; DemoDataSeeder/1.0)"}
+    # Many source sites (WordPress + CDN hotlink protection, e.g.
+    # smtpakistan.com) answer 403 to a bot-like UA or a request with no
+    # same-site Referer — send browser-like headers with the URL's own
+    # origin as Referer.
+    parts = urlsplit(url.strip())
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+        ),
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": f"{parts.scheme}://{parts.netloc}/",
+    }
+    url = url.strip()
     response = None
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
         for attempt in range(retries):

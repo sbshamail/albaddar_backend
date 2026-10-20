@@ -289,7 +289,7 @@ def login_otp_verify(
 @router.post("/resend-verification-email")
 def resend_verification_email(
     session: GetSession,
-    email: EmailStr = Body(...),
+    email: EmailStr,
 ):
     email = email.strip().lower()
     user = session.exec(select(User).where(User.email == email)).first()
@@ -336,9 +336,8 @@ def refresh_token(
 @router.post("/otp-send-email")
 def forgot_password(
     session: GetSession,
-    email: EmailStr = Body(...),
+    email: EmailStr,
 ):
-    email = email.strip().lower()
 
     user = session.exec(select(User).where(User.email == email)).first()
 

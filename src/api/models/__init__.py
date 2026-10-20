@@ -29,3 +29,6 @@ from src.api.models.addressModel import UserAddress
 
 # home (storefront homepage layout)
 from src.api.models.home_model.homeModel import HomeSection, Banner
+
+# blog
+from src.api.models.blog_model.blogModel import Blog

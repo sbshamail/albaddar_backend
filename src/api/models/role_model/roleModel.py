@@ -51,6 +51,7 @@ class SitePermissionEnum(str, Enum):
     ROLE_DELETE = "role:delete"
 
     HOMEPAGE_MANAGE = "homepage:manage"
+    BLOG_MANAGE = "blog:manage"
 
 
 class ShopPermissionEnum(str, Enum):
