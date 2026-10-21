@@ -186,4 +186,6 @@ def public_layout(session: GetSession):
         if HomeSectionType(section.type) in BANNER_SECTION_TYPES and not read.banners:
             continue
         result.append(read)
+    if not result:
+        return api_response(400, "No home sections available")
     return api_response(200, "Home layout", result, len(result))
